@@ -24,7 +24,7 @@ import {
 } from '../base/result';
 import {EngineProxy} from '../common/engine';
 import {pluginManager, PluginManager} from '../common/plugins';
-import {STR} from '../common/query_result';
+import {STR, NUM} from '../common/query_result';
 import {raf} from '../core/raf_scheduler';
 import {MetricVisualisation} from '../public';
 
@@ -35,7 +35,7 @@ import {Spinner} from './widgets/spinner';
 import {VegaView} from './widgets/vega_view';
 
 type Format = 'json'|'prototext'|'proto';
-const FORMATS: Format[] = ['json', 'prototext', 'proto'];
+// const FORMATS: Format[] = ['json', 'prototext', 'proto'];
 
 function getEngine(): EngineProxy|undefined {
   const engineId = globals.getCurrentEngine()?.id;
@@ -47,22 +47,122 @@ function getEngine(): EngineProxy|undefined {
 }
 
 async function getMetrics(engine: EngineProxy): Promise<string[]> {
-  const metrics: string[] = [];
-  const metricsResult = await engine.query('select name from trace_metrics');
-  for (const it = metricsResult.iter({name: STR}); it.valid(); it.next()) {
+  const metrics: string[] = ["Select a slice name"];
+  const results = await engine.query(
+    "select distinct name from slices order by name"
+  );
+
+  for (const it = results.iter({ name: STR }); it.valid(); it.next()) {
     metrics.push(it.name);
   }
   return metrics;
 }
 
+type LatencyData = {
+  summary: {
+    min_dur_us: number;
+    avg_dur_us: number;
+    max_dur_us: number;
+    count: number;
+  };
+
+  data: {
+    dur_us: number;
+  }[]
+}
+
 async function getMetric(
-    engine: EngineProxy, metric: string, format: Format): Promise<string> {
-  const result = await engine.computeMetric([metric], format);
-  if (result instanceof Uint8Array) {
-    return `Uint8Array<len=${result.length}>`;
-  } else {
-    return result;
+    engine: EngineProxy, metric: string, _format: Format): Promise<string> {
+
+  let result = await engine.query(
+    `select min(dur) / 1000 as min_dur, avg(dur) / 1000 as avg_dur, max(dur) / 1000 as max_dur from slices where name = "${metric}"`
+  );
+
+  const data: LatencyData = {
+    summary: {
+      min_dur_us: 0,
+      avg_dur_us: 0,
+      max_dur_us: 0,
+      count: 0,
+    },
+    data: []
+  };
+
+  for (const it = result.iter({min_dur: NUM, avg_dur: NUM, max_dur: NUM}); it.valid(); it.next()) {
+    data.summary.min_dur_us = it.min_dur;
+    data.summary.avg_dur_us = it.avg_dur;
+    data.summary.max_dur_us = it.max_dur;
+    break; // should only have one row!
   }
+
+  result = await engine.query(
+    `select count(*) as cnt from slices where name = "${metric}"`
+  );
+
+  for (const it = result.iter({cnt: NUM}); it.valid(); it.next()) {
+    data.summary.count = it.cnt;
+    break; // should only have one row!
+  }
+
+  result = await engine.query(
+    `select (dur / 1000) as dur_us from slices where name = "${metric}"`
+  );
+
+  for (const it = result.iter({dur_us: NUM}); it.valid(); it.next()) {
+    data.data.push({dur_us: it.dur_us});
+  }
+
+  return JSON.stringify(data);
+}
+
+function spec(name: string): string {
+  return JSON.stringify({
+    "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+    "width": "container",
+    "height": 300,
+    "data": {"name": "metric"},
+    "description": ".",
+    "layer": [
+      {
+        "mark": {"type": "rule", "color": "red"},
+        "encoding": {
+          "x": {
+            "aggregate": "max",
+            "field": "dur_us",
+            "type": "quantitative"
+          }
+        }
+      },
+      {
+        "mark": {
+          "type": "bar",
+          "clip": true
+        },
+        "encoding": {
+          "x": {
+            "bin": {
+              "binned": true,
+              "step": 10
+            },
+            "field": "dur_us",
+            "axis": {
+              "title": `${name} Duration (us)`
+            }
+          },
+          "y": {
+            "aggregate": "count",
+            "scale": {
+              "type": "symlog",
+              "nice": false
+            },
+            "axis": {
+              "title": "Count"
+            }
+          }
+        }
+      }
+    ]
+  });
 }
 
 class MetricsController {
@@ -91,8 +191,20 @@ class MetricsController {
   }
 
   get visualisations(): MetricVisualisation[] {
-    return this.plugins.metricVisualisations().filter(
-        (v) => v.metric === this.selected);
+    // return this.plugins.metricVisualisations().filter(
+    //     (v) => v.metric === this.selected);
+
+    if (!this.selected) {
+      return [];
+    }
+
+    return [
+      {
+        metric: this.selected,
+        path: ["data"],
+        spec: spec(this.selected),
+      },
+    ];
   }
 
   set selected(metric: string|undefined) {
@@ -124,7 +236,6 @@ class MetricsController {
   }
 
   get resultAsJson(): any {
-    console.log(this._json);
     return this._json;
   }
 
@@ -162,6 +273,7 @@ class MetricsController {
 
 interface MetricResultAttrs {
   result: Result<string>;
+  json: LatencyData;
 }
 
 class MetricResultView implements m.ClassComponent<MetricResultAttrs> {
@@ -175,7 +287,7 @@ class MetricResultView implements m.ClassComponent<MetricResultAttrs> {
       return m('pre.metric-error', result.error);
     }
 
-    return m('pre', result.data);
+    return m('pre', JSON.stringify(attrs.json.summary, null, 2));
   }
 }
 
@@ -204,24 +316,24 @@ class MetricPicker implements m.ClassComponent<MetricPickerAttrs> {
                       key: metric,
                     },
                     metric))),
-        m(
-            Select,
-            {
-              oninput: (e: Event) => {
-                if (!e.target) return;
-                controller.format =
-                    (e.target as HTMLSelectElement).value as Format;
-              },
-            },
-            FORMATS.map((f) => {
-              return m('option', {
-                selected: controller.format === f,
-                key: f,
-                value: f,
-                label: f,
-              });
-            }),
-            ),
+        // m(
+        //     Select,
+        //     {
+        //       oninput: (e: Event) => {
+        //         if (!e.target) return;
+        //         controller.format =
+        //             (e.target as HTMLSelectElement).value as Format;
+        //       },
+        //     },
+        //     FORMATS.map((f) => {
+        //       return m('option', {
+        //         selected: controller.format === f,
+        //         key: f,
+        //         value: f,
+        //         label: f,
+        //       });
+        //     }),
+        //     ),
     );
   }
 }
@@ -275,7 +387,7 @@ class MetricPageContents implements m.ClassComponent {
             }
             return m(MetricVizView, {visualisation, data});
           }),
-      m(MetricResultView, {result: controller.result}),
+      m(MetricResultView, {result: controller.result, json: controller.resultAsJson as LatencyData}),
     ];
   }
 }

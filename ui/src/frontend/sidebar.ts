@@ -178,7 +178,7 @@ const SECTIONS: Section[] = [
         i: 'area_chart',
         isVisible: () => VIZ_PAGE_IN_NAV_FLAG.get(),
       },
-      {t: 'Metrics', a: navigateMetrics, i: 'speed'},
+      {t: 'Latency', a: navigateMetrics, i: 'speed'},
       {t: 'Info and stats', a: navigateInfo, i: 'info'},
     ],
   },
@@ -223,16 +223,16 @@ const SECTIONS: Section[] = [
     expanded: true,
     summary: 'Open an example trace',
     items: [
-      {
-        t: 'Open Android example',
-        a: openTraceUrl(EXAMPLE_ANDROID_TRACE_URL),
-        i: 'description',
-      },
-      {
-        t: 'Open Chrome example',
-        a: openTraceUrl(EXAMPLE_CHROME_TRACE_URL),
-        i: 'description',
-      },
+      // {
+      //   t: 'Open Android example',
+      //   a: openTraceUrl(EXAMPLE_ANDROID_TRACE_URL),
+      //   i: 'description',
+      // },
+      // {
+      //   t: 'Open Chrome example',
+      //   a: openTraceUrl(EXAMPLE_CHROME_TRACE_URL),
+      //   i: 'description',
+      // },
     ],
   },
 
