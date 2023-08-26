@@ -58,6 +58,7 @@ import {maybeOpenTraceFromRoute} from './trace_url_handler';
 import {ViewerPage} from './viewer_page';
 import {VizPage} from './viz_page';
 import {WidgetsPage} from './widgets_page';
+import { LatencysPage } from './latency_page';
 
 const EXTENSION_ID = 'lfmkphfpdbjijhpomgecfikhfohaoine';
 
@@ -224,6 +225,7 @@ function main() {
     '/insights': InsightsPage,
     '/flags': FlagsPage,
     '/metrics': MetricsPage,
+    '/latency': LatencysPage,
     '/info': TraceInfoPage,
     '/widgets': WidgetsPage,
     '/viz': VizPage,
